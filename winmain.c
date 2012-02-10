@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <pwd.h>
 #include <shellapi.h>
+#include <shlwapi.h>
 
 #include <sys/cygwin.h>
 
@@ -32,6 +33,40 @@ static bool resizing;
 
 static HBITMAP caretbm;
 
+#ifdef MSYS
+#define APPID "mintty.MSYS"
+#else
+#define APPID "mintty.Cygwin"
+#endif
+
+// propkey.h objects for AppID
+typedef struct _tagpropertykey {
+    GUID fmtid;
+    DWORD pid;
+} PROPERTYKEY;
+#define REFPROPERTYKEY const PROPERTYKEY *
+#define REFPROPVARIANT const PROPVARIANT *
+
+#ifdef INTERFACE
+#undef INTERFACE
+#endif
+#define INTERFACE IPropertyStore
+DECLARE_INTERFACE_(IPropertyStore,IUnknown) {
+	STDMETHOD(QueryInterface)(THIS_ REFIID,PVOID*) PURE;
+	STDMETHOD_(ULONG,AddRef)(THIS) PURE;
+	STDMETHOD_(ULONG,Release)(THIS) PURE;
+	STDMETHOD(GetCount)(THIS_ DWORD) PURE;
+	STDMETHOD(GetAt)(THIS_ DWORD,PROPERTYKEY) PURE;
+	STDMETHOD(GetValue)(THIS_ REFPROPERTYKEY,PROPVARIANT) PURE;
+	STDMETHOD(SetValue)(THIS_ REFPROPERTYKEY,REFPROPVARIANT) PURE;
+	STDMETHOD(Commit)(THIS) PURE;
+};
+#undef INTERFACE
+typedef IPropertyStore *LPPROPERTYSTORE;
+
+const GUID IID_IPropertyStore = {0x886d8eeb, 0x8cf2, 0x4446, {0x8d,0x02, 0xcd,0xba,0x1d,0xbd,0xcf,0x99}};
+const PROPERTYKEY PKEY_AppUserModel_ID = {{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
+
 #if WINVER < 0x600
 
 typedef struct {
@@ -45,19 +80,41 @@ typedef struct {
 
 static HRESULT (WINAPI *pDwmIsCompositionEnabled)(BOOL *);
 static HRESULT (WINAPI *pDwmExtendFrameIntoClientArea)(HWND, const MARGINS *);
+static HRESULT (WINAPI *pSHGetPropertyStoreForWindow)(HWND, REFIID, void**);
+static HRESULT (WINAPI *pPropVariantClear)(PROPVARIANT*);
 
 static void
 load_funcs(void)
 {
-  char dwm_path[MAX_PATH];
-  uint len = GetSystemDirectory(dwm_path, MAX_PATH);
+  char path[MAX_PATH];
+  uint len;
+
+  len = GetSystemDirectory(path, MAX_PATH);
   if (len && len < MAX_PATH - sizeof("\\dwmapi.dll")) {
-    strcat(dwm_path, "\\dwmapi.dll");
-    HMODULE dwm = LoadLibrary(dwm_path);
+    strcat(path, "\\dwmapi.dll");
+    HMODULE dwm = LoadLibrary(path);
     pDwmIsCompositionEnabled =
       (void *)GetProcAddress(dwm, "DwmIsCompositionEnabled");
     pDwmExtendFrameIntoClientArea =
       (void *)GetProcAddress(dwm, "DwmExtendFrameIntoClientArea");
+  }
+  
+  memset(path, 0, MAX_PATH);
+  len = GetSystemDirectory(path, MAX_PATH);
+  if (len && len < MAX_PATH - sizeof("\\shell32.dll")) {
+    strcat(path, "\\shell32.dll");
+    HMODULE dwm = LoadLibrary(path);
+    pSHGetPropertyStoreForWindow =
+      (void *)GetProcAddress(dwm, "SHGetPropertyStoreForWindow");
+  }
+  
+  memset(path, 0, MAX_PATH);
+  len = GetSystemDirectory(path, MAX_PATH);
+  if (len && len < MAX_PATH - sizeof("\\ole32.dll")) {
+    strcat(path, "\\ole32.dll");
+    HMODULE dwm = LoadLibrary(path);
+    pPropVariantClear =
+      (void *)GetProcAddress(dwm, "PropVariantClear");
   }
 }
 
@@ -80,6 +137,25 @@ win_copy_title(void)
   wchar title[len + 1];
   len = GetWindowTextW(wnd, title, len + 1);
   win_copy(title, 0, len + 1);
+}
+
+void
+win_set_appid() {
+  PROPVARIANT pv;
+  IPropertyStore *pps = NULL;
+  HRESULT hr;
+  if (!pSHGetPropertyStoreForWindow || !pPropVariantClear) return;
+  hr = pSHGetPropertyStoreForWindow(wnd, &IID_IPropertyStore, (void**)&pps);
+  if (SUCCEEDED(hr) && pps) {
+    memset(&pv, 0, sizeof(PROPVARIANT));
+    pv.vt = VT_LPWSTR;
+    hr = SHStrDupA(APPID, &pv.pwszVal);
+    if (SUCCEEDED(hr)) {
+      hr = pps->lpVtbl->SetValue(pps, &PKEY_AppUserModel_ID, &pv);
+      pPropVariantClear(&pv);
+    }
+    pps->lpVtbl->Release(pps);
+  }
 }
 
 /*
@@ -975,6 +1051,9 @@ main(int argc, char *argv[])
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
 
+  // AppUserModelID
+  win_set_appid();
+  
   // Initialise the terminal.
   term_reset();
   term_resize(cfg.rows, cfg.cols);

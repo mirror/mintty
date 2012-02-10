@@ -37,7 +37,7 @@ else
 endif
 
 ld_opts := \
-  -mwindows -lcomctl32 -limm32 -lwinspool -lole32 /lib/w32api/libuuid.a \
+  -mwindows -lcomctl32 -limm32 -lwinspool -lole32 -lshlwapi /lib/w32api/libuuid.a \
   -static-libgcc
 
 ifdef debug
@@ -66,6 +66,7 @@ msys = $(dir)-msys.zip
 
 cygwin17: $(cygwin17)
 cygwin15: $(cygwin15)
+msys: defines += -DMSYS
 msys: $(msys)
 src: $(src)
 pdf: $(pdf)
@@ -121,8 +122,10 @@ clean:
 
 ifneq ($(MAKECMDGOALS),clean)
 ifneq ($(MAKECMDGOALS),src)
+ifneq ($(MAKECMDGOALS),msys)
 ifneq ($(MAKECMDGOALS),pdf)
 include $(deps)
+endif
 endif
 endif
 endif
