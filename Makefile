@@ -9,6 +9,7 @@ version := $(shell echo $(shell echo VERSION | cpp -P $(defines) --include appin
 
 exe := $(name).exe
 dir := $(name)-$(version)
+rc_icon = icon/cygwin.ico
 
 srcs := $(wildcard Makefile *.c *.h *.rc *.mft icon/*.ico icon/*.png)
 srcs += $(wildcard COPYING LICENSE* INSTALL)
@@ -66,6 +67,7 @@ msys = $(dir)-msys.zip
 
 cygwin17: $(cygwin17)
 cygwin15: $(cygwin15)
+msys: rc_icon = icon/msys.ico
 msys: defines += -DMSYS
 msys: $(msys)
 src: $(src)
@@ -110,7 +112,7 @@ $(pdf): docs/$(name).1.pdf
 	$(cc) $< -c $(cc_opts)
 
 %.o %.d: %.rc
-	$(rc) $< $(<:.rc=.o)
+	$(rc) $< $(<:.rc=.o) --preprocessor-arg='-DRC_ICON="$(rc_icon)"'
 
 %.1.pdf: %.1
 	groff -t -man -Tps $< | ps2pdf - $@
